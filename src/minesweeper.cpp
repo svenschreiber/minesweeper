@@ -6,6 +6,9 @@
 
 #include "platform.cpp"
 #include <windows.h>
+#include <stdlib.h>
+#include <time.h>
+#include <math.h>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "ext/stb_image.h"
@@ -13,6 +16,13 @@
 static Game_Data *game_data = 0;
 
 static u32 flag_tex_id = 0;
+static u32 mine_tex_id = 0;
+
+static u32 one_tex_id = 0;
+static u32 two_tex_id = 0;
+static u32 three_tex_id = 0;
+static u32 four_tex_id = 0;
+static u32 five_tex_id = 0;
 
 
 #define INFO_BAR_HEIGHT 60
@@ -20,9 +30,100 @@ static u32 flag_tex_id = 0;
 #define CELL_SIZE 25
 
 #define INFO_BAR_COLOR RGB_NORM(76, 76, 110)
-#define CELL_COLOR1 RGB_NORM(117, 129, 172)
-#define CELL_COLOR2 RGB_NORM(124, 135, 178)
+#define CELL_COLOR_UNREVEALED1 RGB_NORM(117, 129, 172)
+#define CELL_COLOR_UNREVEALED2 RGB_NORM(124, 135, 178)
+#define CELL_COLOR_REVEALED1 RGB_NORM(171, 177, 193)
+#define CELL_COLOR_REVEALED2 RGB_NORM(175, 181, 197)
 #define CELL_COLOR_HOVER RGB_NORM(139, 152, 197)
+
+static s32
+get_random(s32 lower, s32 upper) {
+    s32 num = (rand() % (upper - lower + 1)) + lower;
+    return num;
+}
+
+static Vec2i
+get_board_coord(s32 index) {
+    return {index % game_data->board.width, index / game_data->board.height};
+}
+
+static void
+clear_board() {
+    for (int x = 0; x < game_data->board.width; ++x) {
+        for (int y = 0; y < game_data->board.height; ++y) {
+            Game_Board_Cell *cell = &game_data->board.grid[x][y];
+            cell->mine = false;
+            cell->flagged = false;
+            cell->revealed = false;
+        }
+    }
+    game_data->started = false;
+}
+
+static void
+open_cell(Game_Board *board, s32 x, s32 y) {
+    if (x < 0 || x >= board->width || y < 0 || y >= board->height) return; // should never happen
+    if (board->grid[x][y].mine) return;
+
+    s32 mine_count = 0;
+
+    s32 adj_cells_x[8];
+    s32 adj_cells_y[8];
+
+    s32 adj_cells_count = 0;
+    
+    for (s32 i = -1; i <= 1; ++i) {
+        if (x + i < 0 || x + i >= board->width) continue;
+        for (s32 j = -1; j <= 1; ++j) {
+            if (y + j < 0 || y + j >= board->height) continue;
+            if (i == 0 && j == 0) continue;
+            
+            adj_cells_x[adj_cells_count] = x + i;
+            adj_cells_y[adj_cells_count] = y + j;
+            ++adj_cells_count;
+            
+            if (board->grid[x + i][y + j].mine) {
+                ++mine_count;
+            }
+        }
+    }
+    board->grid[x][y].revealed = true;
+    board->grid[x][y].flagged = false;
+    board->grid[x][y].adj_mines = mine_count;
+
+    if (mine_count == 0) {
+        for (s32 i = 0; i < adj_cells_count; ++i) {
+            s32 adj_x = adj_cells_x[i];
+            s32 adj_y = adj_cells_y[i];
+            if (!board->grid[adj_x][adj_y].revealed) {
+                open_cell(board, adj_x, adj_y);
+            }
+        }
+    }
+}
+
+static void
+generate_board(Vec2i start) {
+    Game_Board *board = &game_data->board;
+
+    s32 num_mines = 0;
+
+    while (num_mines < 99) {
+        s32 random = get_random(0, board->width * board->height - 1);
+
+        Vec2i mine = get_board_coord(random);
+        
+        if (abs(start.x - mine.x) > 2 || abs(start.y - mine.y) > 2) {
+            if (!board->grid[mine.x][mine.y].mine) {
+                board->grid[mine.x][mine.y].mine = true;
+                ++num_mines;
+            }
+        }
+    }
+    
+    open_cell(board, start.x, start.y);
+    
+}
 
 static Vec2i
 get_cell_at_mouse_pos() {
@@ -70,8 +171,8 @@ game_draw_board() {
     glEnd();
 
     // draw board
-    for (s32 y = 0; y < board->size_y; ++y) {
-        for (s32 x = 0; x < board->size_x; ++x) {
+    for (s32 y = 0; y < board->height; ++y) {
+        for (s32 x = 0; x < board->width; ++x) {
             
             Vec2i tl = { x * CELL_SIZE, y * CELL_SIZE + INFO_BAR_HEIGHT };
             Vec2i tr = { (x + 1) * CELL_SIZE, tl.y };
@@ -82,15 +183,16 @@ game_draw_board() {
             b32 y_even = !(y % 2);
 
             if (y_even && x_even || !(y_even || x_even)) {
-                glColor3f(CELL_COLOR1);
+                if (board->grid[x][y].revealed) {
+                    glColor3f(CELL_COLOR_REVEALED1);
+                } else {
+                    glColor3f(CELL_COLOR_UNREVEALED1);
+                }
             } else {
-                glColor3f(CELL_COLOR2);
-            }
-
-            if (is_mouse_in_board()) {
-                Vec2i mouse_cell = get_cell_at_mouse_pos();
-                if (mouse_cell.x == x && mouse_cell.y == y) {
-                    glColor3f(CELL_COLOR_HOVER);
+                if (board->grid[x][y].revealed) {
+                    glColor3f(CELL_COLOR_REVEALED2);
+                } else {
+                    glColor3f(CELL_COLOR_UNREVEALED2);
                 }
             }
 
@@ -105,6 +207,7 @@ game_draw_board() {
             // draw flag 
             if (board->grid[x][y].flagged) {
                 glEnable(GL_TEXTURE_2D);
+                glBindTexture(GL_TEXTURE_2D, flag_tex_id);
                 glColor3f(1.0f, 1.0f, 1.0f);
 
                 glBegin(GL_QUADS);
@@ -117,8 +220,74 @@ game_draw_board() {
                 glTexCoord2f(1.0f, 0.0f);
                 glVertex3f((f32)tr.x, (f32)tr.y, 0.0f);
                 glEnd();
-
+                
                 glDisable(GL_TEXTURE_2D);
+            }
+
+            // draw mine
+            if (board->grid[x][y].mine) {
+                glEnable(GL_TEXTURE_2D);
+                glBindTexture(GL_TEXTURE_2D, mine_tex_id);
+                
+                glColor3f(1.0f, 1.0f, 1.0f);
+
+                glBegin(GL_QUADS);
+                glTexCoord2f(0.0f, 0.0f);
+                glVertex3f((f32)tl.x, (f32)tl.y, 0.0f);
+                glTexCoord2f(0.0f, 1.0f);
+                glVertex3f((f32)bl.x, (f32)bl.y, 0.0f);
+                glTexCoord2f(1.0f, 1.0f);
+                glVertex3f((f32)br.x, (f32)br.y, 0.0f);
+                glTexCoord2f(1.0f, 0.0f);
+                glVertex3f((f32)tr.x, (f32)tr.y, 0.0f);
+                glEnd();
+                
+                glDisable(GL_TEXTURE_2D);
+            }
+
+            // draw number
+            if (board->grid[x][y].revealed && board->grid[x][y].adj_mines > 0) {
+                s32 adj_mines = board->grid[x][y].adj_mines;
+                
+                glEnable(GL_TEXTURE_2D);
+
+                switch (adj_mines) {
+                    case 1: glBindTexture(GL_TEXTURE_2D, one_tex_id); break;
+                    case 2: glBindTexture(GL_TEXTURE_2D, two_tex_id); break;
+                    case 3: glBindTexture(GL_TEXTURE_2D, three_tex_id); break;
+                    case 4: glBindTexture(GL_TEXTURE_2D, four_tex_id); break;
+                    case 5: glBindTexture(GL_TEXTURE_2D, five_tex_id); break;
+                }
+                
+                glColor3f(1.0f, 1.0f, 1.0f);
+
+                glBegin(GL_QUADS);
+                glTexCoord2f(0.0f, 0.0f);
+                glVertex3f((f32)tl.x, (f32)tl.y, 0.0f);
+                glTexCoord2f(0.0f, 1.0f);
+                glVertex3f((f32)bl.x, (f32)bl.y, 0.0f);
+                glTexCoord2f(1.0f, 1.0f);
+                glVertex3f((f32)br.x, (f32)br.y, 0.0f);
+                glTexCoord2f(1.0f, 0.0f);
+                glVertex3f((f32)tr.x, (f32)tr.y, 0.0f);
+                glEnd();
+                
+                glDisable(GL_TEXTURE_2D);
+            }
+
+            // draw hover effect
+            if (is_mouse_in_board()) {
+                Vec2i mouse_cell = get_cell_at_mouse_pos();
+                if (mouse_cell.x == x && mouse_cell.y == y) {
+                    glColor4f(1.0f, 1.0f, 1.0f, 0.2f);
+                    
+                    glBegin(GL_QUADS);
+                    glVertex3f((f32)tl.x, (f32)tl.y, 0.0f);
+                    glVertex3f((f32)tr.x, (f32)tr.y, 0.0f);
+                    glVertex3f((f32)br.x, (f32)br.y, 0.0f);
+                    glVertex3f((f32)bl.x, (f32)bl.y, 0.0f);
+                    glEnd();
+                }
             }
         }
     }    
@@ -133,10 +302,16 @@ game_process_events() {
 
             case PLATFORM_EVENT_TYPE_KEY_PRESS: {
                 platform_log("%s pressed!\n", get_key_name(event->key_index).str);
+                if (event->key_index == KEY_ESCAPE) {
+                    platform_state->running = false;
+                }
             } break;
 
             case PLATFORM_EVENT_TYPE_KEY_RELEASE: {
                 platform_log("%s released!\n", get_key_name(event->key_index).str);
+                if (event->key_index == KEY_SPACE) {
+                    clear_board();
+                }
             } break;
 
             case PLATFORM_EVENT_TYPE_CHARACTER_INPUT: {
@@ -149,7 +324,23 @@ game_process_events() {
                     if (is_mouse_in_board()) {
                         Game_Board *board = &game_data->board;
                         Vec2i cell_pos = get_cell_at_mouse_pos();
-                        board->grid[cell_pos.x][cell_pos.y].flagged = !board->grid[cell_pos.x][cell_pos.y].flagged;
+                        Game_Board_Cell *cell = &board->grid[cell_pos.x][cell_pos.y];
+                        if (!cell->revealed) {
+                            cell->flagged = !cell->flagged;
+                        }
+                    }
+                } else if (event->key_index == KEY_MOUSE_BUTTON_LEFT) {
+                    if (is_mouse_in_board()) {
+                        Game_Board *board = &game_data->board;
+                        Vec2i cell_pos = get_cell_at_mouse_pos();
+                        Game_Board_Cell *cell = &board->grid[cell_pos.x][cell_pos.y];
+                        if (!cell->revealed && !cell->flagged) {
+                            if (!game_data->started) {
+                                game_data->started = true;
+                                generate_board(cell_pos);
+                            }
+                            open_cell(board, cell_pos.x, cell_pos.y);
+                        }
                     }
                 }
             } break;
@@ -178,8 +369,11 @@ void game_init() {
     }
     Mem_Arena *arena = game_data->arena = &game_data->arena_;
 
-    game_data->board.size_x = 24;
-    game_data->board.size_y = 20;
+    game_data->board.width = 24;
+    game_data->board.height = 20;
+    game_data->started = false;
+
+    srand((u32)time(0));
     
     load_gl_functions();
     glClearColor(0.2f, 0.2f, 0.25f, 0.0f);
@@ -193,11 +387,18 @@ void game_init() {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
     flag_tex_id = load_texture("res/flag.png");
+    mine_tex_id = load_texture("res/mine.png");
+
+    one_tex_id = load_texture("res/one.png");
+    two_tex_id = load_texture("res/two.png");
+    three_tex_id = load_texture("res/three.png");
+    four_tex_id = load_texture("res/four.png");
+    five_tex_id = load_texture("res/five.png");
 }
 
 void game_update() {
     game_process_events();
-    
+
     glClear(GL_COLOR_BUFFER_BIT);
 
     game_draw_board();
