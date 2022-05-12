@@ -4,6 +4,8 @@ A simple Minesweeper clone made from scratch. It uses OpenGL for rendering and i
 It isn't guaranteed solvable.
 
 ### Usage
-Mouse-Left: Reveal field
-Mouse-Right: Place flag
-Spacebar: Reset Game
+| Keybind     | Action       |
+|-------------|--------------|
+| Mouse-Left  | Reveal field |
+| Mouse-Right | Place flag   |
+| Spacebar    | Reset Game   |
