@@ -22,6 +22,8 @@ struct Game_Data {
     Mem_Arena *arena;
     Game_Board board;
     b32 started;
+    b32 lost;
+    b32 won;
 };
 
 #define MINESWEEPER_H
